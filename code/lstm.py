@@ -114,10 +114,10 @@ def load_params(path, params):
     return params
 
 
-def init_tparams(params):
+def init_tparams(params, target):
     tparams = OrderedDict()
     for kk, pp in params.iteritems():
-        tparams[kk] = theano.shared(params[kk], name=kk)
+        tparams[kk] = theano.shared(params[kk], name=kk, target=target)
     return tparams
 
 
@@ -207,7 +207,7 @@ def lstm_layer(tparams, state_below, options, prefix='lstm', mask=None):
 layers = {'lstm': (param_init_lstm, lstm_layer)}
 
 
-def sgd(lr, tparams, grads, x, mask, y, cost):
+def sgd(lr, tparams, grads, x, mask, y, cost, target):
     """ Stochastic Gradient Descent
 
     :note: A more complicated version of sgd then needed.  This is
@@ -216,7 +216,7 @@ def sgd(lr, tparams, grads, x, mask, y, cost):
     """
     # New set of shared variable that will contain the gradient
     # for a mini-batch.
-    gshared = [theano.shared(p.get_value() * 0., name='%s_grad' % k)
+    gshared = [theano.shared(p.get_value() * 0., name='%s_grad' % k, target=target)
                for k, p in tparams.iteritems()]
     gsup = [(gs, g) for gs, g in zip(gshared, grads)]
 
@@ -235,7 +235,7 @@ def sgd(lr, tparams, grads, x, mask, y, cost):
     return f_grad_shared, f_update
 
 
-def adadelta(lr, tparams, grads, x, mask, y, cost):
+def adadelta(lr, tparams, grads, x, mask, y, cost, target):
     """
     An adaptive learning rate optimizer
 
@@ -265,13 +265,13 @@ def adadelta(lr, tparams, grads, x, mask, y, cost):
     """
 
     zipped_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                  name='%s_grad' % k)
+                                  name='%s_grad' % k, target=target)
                     for k, p in tparams.iteritems()]
     running_up2 = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                 name='%s_rup2' % k)
+                                 name='%s_rup2' % k, target=target)
                    for k, p in tparams.iteritems()]
     running_grads2 = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                    name='%s_rgrad2' % k)
+                                    name='%s_rgrad2' % k, target=target)
                       for k, p in tparams.iteritems()]
 
     zgup = [(zg, g) for zg, g in zip(zipped_grads, grads)]
@@ -296,7 +296,7 @@ def adadelta(lr, tparams, grads, x, mask, y, cost):
     return f_grad_shared, f_update
 
 
-def rmsprop(lr, tparams, grads, x, mask, y, cost):
+def rmsprop(lr, tparams, grads, x, mask, y, cost, target):
     """
     A variant of  SGD that scales the step size by running average of the
     recent step norms.
@@ -328,13 +328,13 @@ def rmsprop(lr, tparams, grads, x, mask, y, cost):
     """
 
     zipped_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                  name='%s_grad' % k)
+                                  name='%s_grad' % k, target=target)
                     for k, p in tparams.iteritems()]
     running_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                   name='%s_rgrad' % k)
+                                   name='%s_rgrad' % k, target=target)
                      for k, p in tparams.iteritems()]
     running_grads2 = [theano.shared(p.get_value() * numpy_floatX(0.),
-                                    name='%s_rgrad2' % k)
+                                    name='%s_rgrad2' % k, target=target)
                       for k, p in tparams.iteritems()]
 
     zgup = [(zg, g) for zg, g in zip(zipped_grads, grads)]
@@ -347,7 +347,7 @@ def rmsprop(lr, tparams, grads, x, mask, y, cost):
                                     name='rmsprop_f_grad_shared')
 
     updir = [theano.shared(p.get_value() * numpy_floatX(0.),
-                           name='%s_updir' % k)
+                           name='%s_updir' % k, target=target)
              for k, p in tparams.iteritems()]
     updir_new = [(ud, 0.9 * ud - 1e-4 * zg / tensor.sqrt(rg2 - rg ** 2 + 1e-4))
                  for ud, zg, rg, rg2 in zip(updir, zipped_grads, running_grads,
@@ -361,15 +361,18 @@ def rmsprop(lr, tparams, grads, x, mask, y, cost):
     return f_grad_shared, f_update
 
 
-def build_model(tparams, options):
+def build_model(tparams, options, target):
     trng = RandomStreams(SEED)
 
     # Used for dropout.
-    use_noise = theano.shared(numpy_floatX(0.))
+    use_noise = theano.shared(numpy.asarray(0, 'int64'), target=target)
 
     x = tensor.matrix('x', dtype='int64')
+    x.tag.context_name = target
     mask = tensor.matrix('mask', dtype=config.floatX)
+    mask.tag.context_name = target
     y = tensor.vector('y', dtype='int64')
+    y.tag.context_name = target
 
     n_timesteps = x.shape[0]
     n_samples = x.shape[1]
@@ -466,14 +469,14 @@ def train_lstm(
                        # This frequently need a bigger model.
     reload_model=None,  # Path to a saved model we want to start from.
     test_size=-1,  # If >0, we keep only this number of test example.
+    target=None
 ):
-
     # Model options
     model_options = locals().copy()
     print "model options", model_options
-
+        
     load_data, prepare_data = get_dataset(dataset)
-
+    
     print 'Loading data'
     train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
                                    maxlen=maxlen)
@@ -485,10 +488,10 @@ def train_lstm(
         numpy.random.shuffle(idx)
         idx = idx[:test_size]
         test = ([test[0][n] for n in idx], [test[1][n] for n in idx])
+        
+        ydim = numpy.max(train[1]) + 1
 
-    ydim = numpy.max(train[1]) + 1
-
-    model_options['ydim'] = ydim
+        model_options['ydim'] = ydim
 
     print 'Building model'
     # This create the initial parameters as numpy ndarrays.
@@ -501,14 +504,16 @@ def train_lstm(
     # This create Theano Shared Variable from the parameters.
     # Dict name (string) -> Theano Tensor Shared Variable
     # params and tparams have different copy of the weights.
-    tparams = init_tparams(params)
+    tparams = init_tparams(params, target)
 
     # use_noise is for dropout
     (use_noise, x, mask,
-     y, f_pred_prob, f_pred, cost) = build_model(tparams, model_options)
+     y, f_pred_prob, f_pred, cost) = build_model(tparams, model_options, target)
+#    theano.printing.debugprint(f_pred_prob, print_type=True)
+#    theano.printing.debugprint(f_pred, print_type=True)
 
     if decay_c > 0.:
-        decay_c = theano.shared(numpy_floatX(decay_c), name='decay_c')
+        decay_c = theano.shared(numpy_floatX(decay_c), name='decay_c', target=target)
         weight_decay = 0.
         weight_decay += (tparams['U'] ** 2).sum()
         weight_decay *= decay_c
@@ -518,11 +523,16 @@ def train_lstm(
 
     grads = tensor.grad(cost, wrt=tparams.values())
     f_grad = theano.function([x, mask, y], grads, name='f_grad')
-
+    
     lr = tensor.scalar(name='lr')
     f_grad_shared, f_update = optimizer(lr, tparams, grads,
-                                        x, mask, y, cost)
+                                        x, mask, y, cost, target)
+#    print "f_grad_shared"
+#    theano.printing.debugprint(f_grad_shared, print_type=True)
+#    print "f_update"
+#    theano.printing.debugprint(f_update, print_type=True)
 
+        
     print 'Optimization'
 
     kf_valid = get_minibatches_idx(len(valid[0]), valid_batch_size)
@@ -532,123 +542,151 @@ def train_lstm(
     print "%d valid examples" % len(valid[0])
     print "%d test examples" % len(test[0])
 
-    history_errs = []
-    best_p = None
-    bad_count = 0
+    def _train_w(validFreq=validFreq, saveFreq=saveFreq):
+        history_errs = []
+        best_p = None
+        bad_count = 0
 
-    if validFreq == -1:
-        validFreq = len(train[0]) / batch_size
-    if saveFreq == -1:
-        saveFreq = len(train[0]) / batch_size
+        if validFreq == -1:
+            validFreq = len(train[0]) / batch_size
+        if saveFreq == -1:
+            saveFreq = len(train[0]) / batch_size
 
-    uidx = 0  # the number of update done
-    estop = False  # early stop
-    start_time = time.time()
-    try:
-        for eidx in xrange(max_epochs):
-            n_samples = 0
+        uidx = 0  # the number of update done
+        estop = False  # early stop
+        start_time = time.time()
+        try:
+            for eidx in xrange(max_epochs):
+                n_samples = 0
 
-            # Get new shuffled index for the training set.
-            kf = get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
+                # Get new shuffled index for the training set.
+                kf = get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
 
-            for _, train_index in kf:
-                uidx += 1
-                use_noise.set_value(1.)
+                for _, train_index in kf:
+                    uidx += 1
+                    use_noise.set_value(1)
 
-                # Select the random examples for this minibatch
-                y = [train[1][t] for t in train_index]
-                x = [train[0][t]for t in train_index]
+                    # Select the random examples for this minibatch
+                    y = [train[1][t] for t in train_index]
+                    x = [train[0][t]for t in train_index]
 
-                # Get the data in numpy.ndarray format
-                # This swap the axis!
-                # Return something of shape (minibatch maxlen, n samples)
-                x, mask, y = prepare_data(x, y)
-                n_samples += x.shape[1]
+                    # Get the data in numpy.ndarray format
+                    # This swap the axis!
+                    # Return something of shape (minibatch maxlen, n samples)
+                    x, mask, y = prepare_data(x, y)
+                    n_samples += x.shape[1]
 
-                cost = f_grad_shared(x, mask, y)
-                f_update(lrate)
+                    cost = f_grad_shared(x, mask, y)
+                    f_update(lrate)
 
-                if numpy.isnan(cost) or numpy.isinf(cost):
-                    print 'bad cost detected: ', cost
-                    return 1., 1., 1.
+                    #if numpy.isnan(cost) or numpy.isinf(cost):
+                    #    print 'bad cost detected: ', cost
+                    #    return 1., 1., 1.
 
-                if numpy.mod(uidx, dispFreq) == 0:
-                    print 'Epoch ', eidx, 'Update ', uidx, 'Cost ', cost
+                    if numpy.mod(uidx, dispFreq) == 0:
+                        print 'Epoch ', eidx, 'Update ', uidx, 'Cost ', cost
 
-                if saveto and numpy.mod(uidx, saveFreq) == 0:
-                    print 'Saving...',
+                    if saveto and numpy.mod(uidx, saveFreq) == 0:
+                        print 'Saving...',
 
-                    if best_p is not None:
-                        params = best_p
-                    else:
-                        params = unzip(tparams)
-                    numpy.savez(saveto, history_errs=history_errs, **params)
-                    pkl.dump(model_options, open('%s.pkl' % saveto, 'wb'), -1)
-                    print 'Done'
+                        if best_p is not None:
+                            params = best_p
+                        else:
+                            params = unzip(tparams)
+                        numpy.savez(saveto, history_errs=history_errs, **params)
+                        pkl.dump(model_options, open('%s.pkl' % saveto, 'wb'), -1)
+                        print 'Done'
 
-                if numpy.mod(uidx, validFreq) == 0:
-                    use_noise.set_value(0.)
-                    train_err = pred_error(f_pred, prepare_data, train, kf)
-                    valid_err = pred_error(f_pred, prepare_data, valid,
+                    if numpy.mod(uidx, validFreq) == 0:
+                        use_noise.set_value(0)
+                        train_err = pred_error(f_pred, prepare_data, train, kf)
+                        valid_err = pred_error(f_pred, prepare_data, valid,
                                            kf_valid)
-                    test_err = pred_error(f_pred, prepare_data, test, kf_test)
+                        test_err = pred_error(f_pred, prepare_data, test, kf_test)
 
-                    history_errs.append([valid_err, test_err])
+                        history_errs.append([valid_err, test_err])
 
-                    if (best_p is None or
-                        valid_err <= numpy.array(history_errs)[:,
-                                                               0].min()):
+                        if (best_p is None or
+                            valid_err <= numpy.array(history_errs)[:,
+                                                                   0].min()):
 
-                        best_p = unzip(tparams)
-                        bad_counter = 0
+                            best_p = unzip(tparams)
+                            bad_counter = 0
 
-                    print ('Train ', train_err, 'Valid ', valid_err,
-                           'Test ', test_err)
+                        print ('Train ', train_err, 'Valid ', valid_err,
+                               'Test ', test_err)
 
-                    if (len(history_errs) > patience and
-                        valid_err >= numpy.array(history_errs)[:-patience,
-                                                               0].min()):
-                        bad_counter += 1
-                        if bad_counter > patience:
-                            print 'Early Stop!'
-                            estop = True
-                            break
+                        if (len(history_errs) > patience and
+                            valid_err >= numpy.array(history_errs)[:-patience,
+                                                                   0].min()):
+                            bad_counter += 1
+                            if bad_counter > patience:
+                                print 'Early Stop!'
+                                estop = True
+                                break
 
-            print 'Seen %d samples' % n_samples
+                print 'Seen %d samples' % n_samples
 
-            if estop:
-                break
+                if estop:
+                    break
 
-    except KeyboardInterrupt:
-        print "Training interupted"
+        except KeyboardInterrupt:
+            print "Training interupted"
 
-    end_time = time.time()
-    if best_p is not None:
-        zipp(best_p, tparams)
-    else:
-        best_p = unzip(tparams)
+        end_time = time.time()
+        if best_p is not None:
+            zipp(best_p, tparams)
+        else:
+            best_p = unzip(tparams)
 
-    use_noise.set_value(0.)
-    kf_train_sorted = get_minibatches_idx(len(train[0]), batch_size)
-    train_err = pred_error(f_pred, prepare_data, train, kf_train_sorted)
-    valid_err = pred_error(f_pred, prepare_data, valid, kf_valid)
-    test_err = pred_error(f_pred, prepare_data, test, kf_test)
+        use_noise.set_value(0)
+        kf_train_sorted = get_minibatches_idx(len(train[0]), batch_size)
+        train_err = pred_error(f_pred, prepare_data, train, kf_train_sorted)
+        valid_err = pred_error(f_pred, prepare_data, valid, kf_valid)
+        test_err = pred_error(f_pred, prepare_data, test, kf_test)
 
-    print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
-    if saveto:
-        numpy.savez(saveto, train_err=train_err,
-                    valid_err=valid_err, test_err=test_err,
-                    history_errs=history_errs, **best_p)
-    print 'The code run for %d epochs, with %f sec/epochs' % (
-        (eidx + 1), (end_time - start_time) / (1. * (eidx + 1)))
-    print >> sys.stderr, ('Training took %.1fs' %
-                          (end_time - start_time))
-    return train_err, valid_err, test_err
-
+        print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
+        if saveto:
+            numpy.savez(saveto, train_err=train_err,
+                        valid_err=valid_err, test_err=test_err,
+                        history_errs=history_errs, **best_p)
+        print 'The code run for %d epochs, with %f sec/epochs' % (
+            (eidx + 1), (end_time - start_time) / (1. * (eidx + 1)))
+        print >> sys.stderr, ('Training took %.1fs' %
+                              (end_time - start_time))
+        return train_err, valid_err, test_err
+    return _train_w
+    
 
 if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
-    train_lstm(
-        max_epochs=100,
-        test_size=500,
+    from threading import Thread
+
+    run0 = train_lstm(                
+        patience=10,
+        max_epochs=10,
+        test_size=100,
+        target='dev0',
+        saveto=False
     )
+#    import sys; sys.exit(0)
+    run1 = train_lstm(
+        patience=10,
+        max_epochs=10,
+        test_size=100,
+        target='dev1',
+        saveto=False
+    )
+    t1 = Thread(target=run0)
+    t2 = Thread(target=run1)
+
+#    run0()
+#    run1()
+    s = time.time()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    e = time.time()
+
+    print e-s
