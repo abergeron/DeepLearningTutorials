@@ -22,6 +22,8 @@ def lstm_control(dataset='imdb',
 
     load_data, prepare_data = lstm.get_dataset(dataset)
 
+    print "Loading data"
+
     train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
                                    maxlen=maxlen)
 
@@ -39,7 +41,7 @@ def lstm_control(dataset='imdb',
 
     ydim = numpy.max(train[1]) + 1
 
-    l.register_control('ydim', lambda: str(ydim))
+
 
     if validFreq == -1:
         validFreq = len(train[0]) / batch_size
@@ -66,6 +68,8 @@ def lstm_control(dataset='imdb',
                 valid_flag[0] = False
                 return 'valid'
             return 'train'
+        if req == 'ydim':
+            return int(ydim)
         if isinstance(req, dict):
             if 'valid_err' in req:
                 valid_err = req['valid_err']
@@ -88,6 +92,8 @@ def lstm_control(dataset='imdb',
 
     uidx = 0
 
+    print "Lieutenant is ready"
+
     for eidx in xrange(max_epochs):
         kf = lstm.get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
         for _, train_index in kf:
@@ -103,3 +109,7 @@ def lstm_control(dataset='imdb',
                 save_flag[0] = True
             if numpy.mod(uidx, validFreq) == 0:
                 valid_flag[0] = True
+
+
+if __name__ == '__main__':
+    lstm_control()

@@ -477,17 +477,19 @@ def train_lstm(
     # Dict name (string) -> numpy ndarray
     params = init_params(model_options)
 
-    params_spec = [(p.dtype, p.shape) for p in params]
-    s.init_shared_params('DLTlstm', params_spec)
-
     if mode == 'init':
-
         if reload_model:
             load_params('lstm_model.npz', params)
-        for sp, p in zip(s.params, params):
-            sp[:] = p[:]
 
-    params = list(s.params)
+    items = list(params.items())
+
+    keys = [it[0] for it in items]
+    vals = [it[1] for it in items]
+
+    params_spec = [(v.dtype, v.shape) for v in vals]
+    s.init_shared_params('DLTlstm', params_spec)
+
+    params = dict(zip(keys, s.params))
 
     # This create Theano Shared Variable from the parameters.
     # Dict name (string) -> Theano Tensor Shared Variable
