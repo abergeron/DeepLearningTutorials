@@ -10,8 +10,13 @@ from theano import config
 import theano.tensor as tensor
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
+import sys
+import os
+sys.path.append(os.path.expanduser('~/ext/platoon'))
+
 import imdb
 import channel
+from param_sync import EASGD
 
 datasets = {'imdb': (imdb.load_data, imdb.prepare_data)}
 
@@ -481,20 +486,17 @@ def train_lstm(
         if reload_model:
             load_params('lstm_model.npz', params)
 
-    items = list(params.items())
-
-    keys = [it[0] for it in items]
-    vals = [it[1] for it in items]
-
-    params_spec = [(v.dtype, v.shape) for v in vals]
-    s.init_shared_params('DLTlstm', params_spec, cleanup=(mode == 'init'))
-
-    params = dict(zip(keys, s.params))
-
-    # This create Theano Shared Variable from the parameters.
+    # This creates Theano Shared Variable from the parameters.
     # Dict name (string) -> Theano Tensor Shared Variable
     # params and tparams have different copy of the weights.
     tparams = init_tparams(params)
+
+    s.init_shared_params('DLTlstm', tparams.values(),
+                         param_sync_rule=EASGD(0.4),
+                         cleanup=(mode == 'init'))
+
+    if mode == 'test':
+        import pdb; pdb.set_trace()
 
     # use_noise is for dropout
     (use_noise, x, mask,
@@ -530,12 +532,17 @@ def train_lstm(
 
     while True:
         step = s.send_req('next')
+        print step
         if step == 'train':
             use_noise.set_value(1.)
-            x, mask, y = s.recv_mb()
+            for i in xrange(10):
+                x, mask, y = s.recv_mb()
 
-            cost = f_grad_shared(x, mask, y)
-            f_update(lrate)
+                cost = f_grad_shared(x, mask, y)
+                print "Train cost", cost
+                f_update(lrate)
+            print "Syncing with global params"
+            s.sync_params(synchronous=True)
 
         """
         if step.startswith('save '):
