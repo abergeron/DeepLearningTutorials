@@ -487,7 +487,7 @@ def train_lstm(
     vals = [it[1] for it in items]
 
     params_spec = [(v.dtype, v.shape) for v in vals]
-    s.init_shared_params('DLTlstm', params_spec)
+    s.init_shared_params('DLTlstm', params_spec, cleanup=(mode == 'init'))
 
     params = dict(zip(keys, s.params))
 
