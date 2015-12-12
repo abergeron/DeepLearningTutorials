@@ -19,9 +19,12 @@ class LSTMLieutenant(channel.Lieutenant):
         self.bad_counter = 0
 
         self.stop = False
+        self.start_time = None
 
     def handle_control(self, req):
         if req == 'next':
+            if self.start_time is None:
+                self.start_time = time.time()
             if self.stop:
                 return 'stop'
             return 'train'
@@ -32,6 +35,9 @@ class LSTMLieutenant(channel.Lieutenant):
                 self.uidx += req['done']
                 if self.uidx > self.max_mb:
                     self.stop = True
+                    self.stop_time = time.time()
+                    print "Training time %fs" % (self.stop_time - self.start_time,)
+                    return 'stop'
             if 'valid_err' in req:
                 valid_err = req['valid_err']
                 test_err = req['test_err']
@@ -44,6 +50,8 @@ class LSTMLieutenant(channel.Lieutenant):
                         valid_err >= harr[:-self.patience].min()):
                     self.bad_counter += 1
                     if self.bad_counter > self.patience:
+                        self.stop_time = time.time()
+                        print "Training time %fs" % (self.stop_time - self.start_time,)
                         self.stop = True
                         return 'stop'
 
@@ -95,10 +103,7 @@ def lstm_control(dataset='imdb',
     t.daemon = True
     t.start() 
     print "Lieutenant is ready"
-    start_time = time.time()
     l.serve()
-    stop_time = time.time()
-    print "Training time %fs" % (stop_time - start_time,)
 
 if __name__ == '__main__':
     lstm_control()

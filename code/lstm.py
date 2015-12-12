@@ -494,6 +494,7 @@ def train_lstm(
     s.init_shared_params('DLTlstm', tparams.values(),
                          param_sync_rule=EASGD(0.4),
                          cleanup=(mode == 'init'))
+    print "Params init done"
 
     if mode == 'test':
         import pdb; pdb.set_trace()
