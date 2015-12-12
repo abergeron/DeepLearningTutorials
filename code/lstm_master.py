@@ -64,7 +64,7 @@ def lstm_control(dataset='imdb',
                  max_epochs=5000,
                  validFreq=370,
                  saveFreq=1110,
-                 batch_size=16,
+                 batch_size=64,
                  valid_batch_size=64,
                  saveto=None,
                  ):
@@ -106,4 +106,4 @@ def lstm_control(dataset='imdb',
     l.serve()
 
 if __name__ == '__main__':
-    lstm_control()
+    lstm_control(max_epochs=10)
