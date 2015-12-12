@@ -1,8 +1,51 @@
+from threading import Thread
 import numpy
+import time
 
 import lstm
 import channel
 
+
+class LSTMLieutenant(channel.Lieutenant):
+    def __init__(self, max_mb, ydim, patience):
+        channel.Lieutenant.__init__(self, port=5566, cport=5567)
+        self.max_mb = max_mb
+        self.ydim = int(ydim)
+        self.patience = patience
+
+        self.uidx = 0
+        self.eidx = 0
+        self.history_errs = []
+        self.bad_counter = 0
+
+        self.stop = False
+
+    def handle_control(self, req):
+        if req == 'next':
+            if self.stop:
+                return 'stop'
+            return 'train'
+        if req == 'ydim':
+            return self.ydim
+        if isinstance(req, dict):
+            if 'done' in req:
+                self.uidx += req['done']
+                if self.uidx > self.max_mb:
+                    self.stop = True
+            if 'valid_err' in req:
+                valid_err = req['valid_err']
+                test_err = req['test_err']
+                self.history_errs.append([valid_err, test_err])
+                harr = numpy.array(self.history_errs)[:, 0]
+                if valid_err <= harr.min():
+                    self.bad_counter = 0
+                    return 'best'
+                if (len(self.history_errs) > self.patience and
+                        valid_err >= harr[:-self.patience].min()):
+                    self.bad_counter += 1
+                    if self.bad_counter > self.patience:
+                        self.stop = True
+                        return 'stop'
 
 def lstm_control(dataset='imdb',
                  patience=10,
@@ -18,7 +61,7 @@ def lstm_control(dataset='imdb',
                  saveto=None,
                  ):
 
-    l = channel.Lieutenant(port=5566, cport=5567)
+    l = LSTMLieutenant(max_mb=0, ydim=0, patience=patience)
 
     load_data, prepare_data = lstm.get_dataset(dataset)
 
@@ -30,86 +73,32 @@ def lstm_control(dataset='imdb',
     del valid
     del test
 
-    if test_size > 0:
-            # The test set is sorted by size, but we want to keep random
-            # size example.  So we must select a random selection of the
-            # examples.
-            idx = numpy.arange(len(test[0]))
-            numpy.random.shuffle(idx)
-            idx = idx[:test_size]
-            test = ([test[0][n] for n in idx], [test[1][n] for n in idx])
-
-    ydim = numpy.max(train[1]) + 1
-
-
-
-    if validFreq == -1:
-        validFreq = len(train[0]) / batch_size
-    if saveFreq == -1:
-        saveFreq = len(train[0]) / batch_size
-
-#    kf_valid = lstm.get_minibatches_idx(len(valid[0]), valid_batch_size)
-#    kf_test = lstm.get_minibatches_idx(len(test[0]), valid_batch_size)
+    l.ydim = int(numpy.max(train[1]) + 1)
 
     print "%d train examples" % len(train[0])
-#    print "%d valid examples" % len(valid[0])
-#    print "%d test examples" % len(test[0])
 
-    stop_flag = [False]
-    save_flag = [False]
-    valid_flag = [False]
-    bad_counter = [0]
+    l.max_mb = ((len(train[0]) * max_epochs) // batch_size) + 1
 
-    def control(req):
-        if req == 'next':
-            if stop_flag[0]:
-                return 'stop'
-            if valid_flag[0]:
-                valid_flag[0] = False
-                return 'valid'
-            return 'train'
-        if req == 'ydim':
-            return int(ydim)
-        if isinstance(req, dict):
-            if 'valid_err' in req:
-                valid_err = req['valid_err']
-                test_err = req['test_err']
-                history_errs.append([valid_err, test_err])
-                if valid_err <= numpy.array(history_errs)[:, 0].min():
-                    bad_counter[0] = 0
-                    return 'best'
-                if (len(history_errs) > patience and
-                        valid_err >= numpy.array(history_errs)[:-patience,
-                                                               0].min()):
-                    bad_counter[0] += 1
-                    if bad_counter[0] > patience:
-                        stop_flag[0] = True
-            return None
+    def send_mb():
+        while True:
+            kf = lstm.get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
+            for _, train_index in kf:
+                # Select the random examples for this minibatch
+                y = [train[1][t] for t in train_index]
+                x = [train[0][t] for t in train_index]
 
-    l.handle_control = control
+                x, mask, y = prepare_data(x, y)
 
-    history_errs = []
+                l.send_mb([x, mask, y])
 
-    uidx = 0
-
+    t = Thread(target=send_mb)
+    t.daemon = True
+    t.start() 
     print "Lieutenant is ready"
-
-    for eidx in xrange(max_epochs):
-        kf = lstm.get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
-        for _, train_index in kf:
-            # Select the random examples for this minibatch
-            y = [train[1][t] for t in train_index]
-            x = [train[0][t] for t in train_index]
-
-            x, mask, y = prepare_data(x, y)
-
-            l.send_mb([x, mask, y])
-            uidx += 1
-            if saveto and numpy.mod(uidx, saveFreq) == 0:
-                save_flag[0] = True
-            if numpy.mod(uidx, validFreq) == 0:
-                valid_flag[0] = True
-
+    start_time = time.time()
+    l.serve()
+    stop_time = time.time()
+    print "Training time %fs" % (stop_time - start_time,)
 
 if __name__ == '__main__':
     lstm_control()

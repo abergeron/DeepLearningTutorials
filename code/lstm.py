@@ -541,6 +541,7 @@ def train_lstm(
                 cost = f_grad_shared(x, mask, y)
                 print "Train cost", cost
                 f_update(lrate)
+            s.send_req(dict(done=10))
             print "Syncing with global params"
             s.sync_params(synchronous=True)
 
