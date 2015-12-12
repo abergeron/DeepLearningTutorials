@@ -1,4 +1,4 @@
-from threading import Thread
+from multiprocessing import Process
 import numpy
 import time
 
@@ -8,7 +8,7 @@ import channel
 
 class LSTMLieutenant(channel.Lieutenant):
     def __init__(self, max_mb, ydim, patience):
-        channel.Lieutenant.__init__(self, port=5566, cport=5567)
+        channel.Lieutenant.__init__(self)
         self.max_mb = max_mb
         self.ydim = int(ydim)
         self.patience = patience
@@ -20,6 +20,40 @@ class LSTMLieutenant(channel.Lieutenant):
 
         self.stop = False
         self.start_time = None
+
+    def init_mb(self, dataset, n_words, maxlen, batch_size, max_epochs):
+        load_data, self.prepare_data = lstm.get_dataset(dataset)
+
+        self.batch_size = batch_size
+
+        print "Loading data"
+        self.train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
+                                            maxlen=maxlen)
+
+        self.ydim = int(numpy.max(self.train[1]) + 1)
+
+        print "%d train examples" % len(self.train[0])
+
+        self.max_mb = ((len(self.train[0]) * max_epochs) // batch_size) + 1
+        self.max_mb = 240
+
+    def start_mb_server(self, port):
+        self.p = Process(target=self.do_mb, args=(port,))
+        self.p.start()
+
+    def do_mb(self, port):
+        self.init_data(port=port)
+        while True:
+            kf = lstm.get_minibatches_idx(len(self.train[0]), self.batch_size, shuffle=True)
+            for _, train_index in kf:
+                # Select the random examples for this minibatch
+                y = [self.train[1][t] for t in train_index]
+                x = [self.train[0][t] for t in train_index]
+
+                x, mask, y = self.prepare_data(x, y)
+
+                self.send_mb([x, mask, y])
+
 
     def handle_control(self, req):
         if req == 'next':
@@ -71,37 +105,10 @@ def lstm_control(dataset='imdb',
 
     l = LSTMLieutenant(max_mb=0, ydim=0, patience=patience)
 
-    load_data, prepare_data = lstm.get_dataset(dataset)
+    l.init_mb(dataset, n_words, maxlen, batch_size, max_epochs)
+    l.start_mb_server(5566)
 
-    print "Loading data"
-
-    train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
-                                   maxlen=maxlen)
-
-    del valid
-    del test
-
-    l.ydim = int(numpy.max(train[1]) + 1)
-
-    print "%d train examples" % len(train[0])
-
-    l.max_mb = ((len(train[0]) * max_epochs) // batch_size) + 1
-
-    def send_mb():
-        while True:
-            kf = lstm.get_minibatches_idx(len(train[0]), batch_size, shuffle=True)
-            for _, train_index in kf:
-                # Select the random examples for this minibatch
-                y = [train[1][t] for t in train_index]
-                x = [train[0][t] for t in train_index]
-
-                x, mask, y = prepare_data(x, y)
-
-                l.send_mb([x, mask, y])
-
-    t = Thread(target=send_mb)
-    t.daemon = True
-    t.start() 
+    l.init_control(port=5567)
     print "Lieutenant is ready"
     l.serve()
 
