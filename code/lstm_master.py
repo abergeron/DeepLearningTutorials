@@ -35,7 +35,6 @@ class LSTMLieutenant(channel.Lieutenant):
         print "%d train examples" % len(self.train[0])
 
         self.max_mb = ((len(self.train[0]) * max_epochs) // batch_size) + 1
-        self.max_mb = 240
 
     def start_mb_server(self, port):
         self.p = Process(target=self.do_mb, args=(port,))
