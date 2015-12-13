@@ -535,7 +535,7 @@ def train_lstm(
         step = s.send_req('next')
         print step
         if step == 'train':
-            use_noise.set_value(1.)
+            use_noise.set_value(numpy_floatX(1.))
             for i in xrange(10):
                 x, mask, y = s.recv_mb()
 
@@ -557,7 +557,7 @@ def train_lstm(
         """
 
         if step == 'valid':
-            use_noise.set_value(0.)
+            use_noise.set_value(numpy_floatX(0.))
             valid_err = pred_error(f_pred, prepare_data, valid,
                                    kf_valid)
             test_err = pred_error(f_pred, prepare_data, test, kf_test)
@@ -582,7 +582,7 @@ def train_lstm(
     else:
         best_p = unzip(tparams)
 
-    use_noise.set_value(0.)
+    use_noise.set_value(numpy_floatX(0.))
     kf_train_sorted = get_minibatches_idx(len(train[0]), batch_size)
     train_err = pred_error(f_pred, prepare_data, train, kf_train_sorted)
     valid_err = pred_error(f_pred, prepare_data, valid, kf_valid)
